@@ -19,22 +19,18 @@ type Result struct {
 	Content string
 }
 
-func (this *Result) HasContent() bool {
-	return len(this.Content) > 0
-}
-
 type ResultList []Result
 
 func (list *ResultList) Add(r Result) {
 	list = append(list, r)
 }
-func (list *ResultList) GetContentByLine(line int) string {
+func (list *ResultList) FindByLine(line int) Result {
 	for _, r := range list {
 		if r.Line == line {
-			return r.Content
+			return r
 		}
 	}
-	return ""
+	return nil
 }
 
 func (list *ResultList) fristItem() Result {
@@ -44,9 +40,9 @@ func (list *ResultList) lastItem() Result {
 	return list[len(list)-1]
 }
 
-func (list *ResultList) Render(n int) []ResultList {
+func (list *ResultList) Render(n int) ResultList {
 	group := ResultList{}
-	groups := []ResultList{}
+	groups := []ResultList{} // [1,2,3,5,7,11,13,17] => [[1,2,3,5,7], [11, 13], [19]]
 	for _, item := range list {
 		if len(group) == 0 {
 			group = append(group, item)
@@ -60,7 +56,7 @@ func (list *ResultList) Render(n int) []ResultList {
 		}
 	}
 
-	outputLines := []int{}
+	outputLines := ResultList{}
 	for _, g := range groups {
 		first := g.fristItem()
 		last := g.lastItem()
@@ -69,15 +65,14 @@ func (list *ResultList) Render(n int) []ResultList {
 		}
 		tail := last + n
 		for i := head; i <= tail; i++ {
-			
-			if content := g.GetContentByLine(l); content!=
-		}
-		for _, l := range g {
-
+			if a := list.FindByLine(i); a == nil {
+				a = Result{Line: i}
+			}
+			outputLines.Add(a)
 		}
 	}
 	//TODO: render it
-	return groups // [1,2,3,5,7,11,13,17] => [[1,2,3,5,7], [11, 13], [17]]
+	return outputLines // [9-15, 17-21]
 }
 
 func matchText(expr, filename string) {
