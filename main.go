@@ -72,12 +72,10 @@ func (list *ResultList) Render(n int) ResultList {
 			outputLines.Add(a)
 		}
 	}
-	//TODO: render it
 	return outputLines // [9-15, 17-21]
 }
 
 func matchText(expr, filename string) ResultList {
-	const N = 2
 	var (
 		H = []byte("@B") // highlight
 		R = []byte("@|") // reset
@@ -103,10 +101,12 @@ func matchText(expr, filename string) ResultList {
 			total := [][]byte{content[0:head], H, content[head:tail], R, content[tail:]}
 			content = bytes.Join(total, J)
 		}
-		resultList.Add(Result{line, content})
+		resultList.Add(Result{line, string(content)})
 	}
-	results := resultList.Render(2)
+	return resultList
+}
 
+func printResults(results ResultList) {
 	for cousor, line := 0, 1; scanner.Scan(); line++ {
 		if line != results[cousor].Line {
 			continue
@@ -122,8 +122,6 @@ func matchText(expr, filename string) ResultList {
 		}
 		cousor++
 	}
-
-	return resultList
 }
 
 func walk(expr, path string) {
@@ -149,31 +147,26 @@ func routineKeeper(done chan bool) {
 }
 
 func fullTextSearch(expr, path string, max int) {
-	count := 0
 	filename := make(chan string, max) // here should use chan
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
-
 	go func() {
 		for {
-			select {
-			case fn := <-filename:
-				matchText(expr, fn).Render(2)
-				done <- true
-			}
+			printResults(matchText(expr, <-filename).Render(2))
+			done <- true
 		}
 	}()
+	defer routineKeeper(done)
 
+	count := 0
 	filepath.Walk(path, func(path string, f os.FileInfo, err error) error {
-		if count >= max || f.IsDir() {
-			return nil
+		if count < max && !f.IsDir() {
+			filename <- path
+			count++
 		}
-		filename <- path
-		count++
 		return nil
 	})
-	routineKeeper(done)
 }
 
 func main() {
