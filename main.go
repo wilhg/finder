@@ -53,6 +53,7 @@ func (list *ResultList) Render(n int) ResultList {
 		} else {
 			groups = append(groups, group)
 			group = ResultList{}
+			group = append(group, item)
 		}
 	}
 
@@ -75,7 +76,7 @@ func (list *ResultList) Render(n int) ResultList {
 	return outputLines // [9-15, 17-21]
 }
 
-func matchText(expr, filename string) {
+func matchText(expr, filename string) ResultList {
 	const N = 2
 	var (
 		H = []byte("@B") // highlight
@@ -87,11 +88,11 @@ func matchText(expr, filename string) {
 	scanner := bufio.NewScanner(f)
 	defer f.Close()
 
+	resultList := ResultList{}
 	for line := 1; scanner.Scan(); line++ {
 		content := scanner.Bytes()
 		indexes := re.FindAllSubmatchIndex(content, -1)
 		if indexes == nil {
-			lines = append(lines, line)
 			continue
 		}
 		offset := 0 // the color code would crease length
@@ -102,11 +103,27 @@ func matchText(expr, filename string) {
 			total := [][]byte{content[0:head], H, content[head:tail], R, content[tail:]}
 			content = bytes.Join(total, J)
 		}
+		resultList.Add(Result{line, content})
+	}
+	results := resultList.Render(2)
 
-		// color.Printf("@c%d@|\t", line)
-		// color.Println(string(content))
+	for cousor, line := 0, 1; scanner.Scan(); line++ {
+		if line != results[cousor].Line {
+			continue
+		} else if results[cousor].Content != "" {
+			color.Printf("@c%d@|:\t", line)
+			color.Println(results[cousor].Content)
+		} else {
+			color.Printf("@c%d@|\t", line)
+			color.Println(scanner.Text())
+			if results[cousor].Line-results[cousor-1].Line > 1 {
+				fmt.Println(":")
+			}
+		}
+		cousor++
 	}
 
+	return resultList
 }
 
 func walk(expr, path string) {
@@ -142,7 +159,7 @@ func fullTextSearch(expr, path string, max int) {
 		for {
 			select {
 			case fn := <-filename:
-				matchText(expr, fn)
+				matchText(expr, fn).Render(2)
 				done <- true
 			}
 		}
