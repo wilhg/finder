@@ -18,6 +18,7 @@ var (
 	SEARCH_MAX    int
 	IS_FULLTEXT   bool
 	CONTEXT_RANGE int
+	EXPR          string
 
 	H = []byte("@{!C}") // highlight
 	R = []byte("@|")    // reset
@@ -27,6 +28,8 @@ func Init() {
 	flag.IntVar(&SEARCH_MAX, "max", 1000, "The maximum number of search")
 	flag.IntVar(&CONTEXT_RANGE, "n", 2, "The lines of context to show")
 	flag.BoolVar(&IS_FULLTEXT, "f", false, "Use fulltext search")
+	EXPR = flag.Arg(0)
+	EXPR = string(bytes.Replace([]byte(EXPR), []byte("@"), []byte("@@"), -1))
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
@@ -34,7 +37,7 @@ type Result struct {
 	Line    int
 	Content string
 }
-
+type PrintFunc func(regexp.Regexp, string)
 type ResultList []Result
 
 func (list *ResultList) Add(r Result) {
@@ -88,13 +91,11 @@ func (list ResultList) Render(n int) ResultList {
 	return outputLines // [9-15, 17-21]
 }
 
-func fulltextSearch(expr, filename string) ResultList {
+func FulltextSearch(re regexp.Regexp, filename string) {
 	// to avoid inject problem, but the cost is change input from @ to @@
-	expr = string(bytes.Replace([]byte(expr), []byte("@"), []byte("@@"), -1))
-	re, _ := regexp.Compile(expr)
 	f, _ := os.Open(filename)
-	scanner := bufio.NewScanner(f)
 	defer f.Close()
+	scanner := bufio.NewScanner(f)
 
 	resultList := ResultList{}
 	for line := 1; scanner.Scan(); line++ {
@@ -115,18 +116,14 @@ func fulltextSearch(expr, filename string) ResultList {
 		}
 		resultList.Add(Result{line, string(content)})
 	}
-	return resultList
-}
 
-func printResults(filename string, results ResultList) {
-	f, _ := os.Open(filename)
-	scanner := bufio.NewScanner(f)
-	defer f.Close()
+	results := resultList.Render(SEARCH_MAX)
 	if len(results) == 0 {
 		return
 	}
 	color.Printf("@{!y}" + filename + "@|\n")
-	for cousor, line := 0, 1; cousor < len(results) && scanner.Scan(); line++ {
+	scanner2 := bufio.NewScanner(f)
+	for cousor, line := 0, 1; cousor < len(results) && scanner2.Scan(); line++ {
 		if line != results[cousor].Line {
 			continue
 		}
@@ -149,8 +146,8 @@ func printResults(filename string, results ResultList) {
 	}
 	fmt.Println()
 }
-func filenameSearch(expr, filename string) {
-	re, _ := regexp.Compile(expr)
+
+func FilenameSearch(re regexp.Regexp, filename string) {
 	content := []byte(filename)
 	indexes := re.FindAllSubmatchIndex(content, -1)
 	if indexes == nil {
@@ -179,25 +176,45 @@ func routineKeeper(done chan bool) {
 	}
 }
 
+func task(fulltext, unfulltext PrintFunc) PrintFunc {
+	if IS_FULLTEXT {
+		return fulltext
+	} else {
+		return unfulltext
+	}
+}
+
 func search(expr, path string, max int) {
 	filename := make(chan string, max)
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
+
+	theFunc := task(FulltextSearch, FilenameSearch)
 	go func() {
-		if IS_FULLTEXT {
-			for {
-				fn := <-filename
-				printResults(fn, fulltextSearch(expr, fn).Render(CONTEXT_RANGE))
-				done <- true
-			}
-		} else { // only match filename
-			for {
-				fn := <-filename
-				filenameSearch(expr, fn)
-				done <- true
-			}
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
+		for {
+			fn := <-filename
+			theFunc(re, fn)
+			done <- true
+		}
+		// if IS_FULLTEXT {
+		// 	for {
+		// 		fn := <-filename
+		// 		fulltextSearch(re, fn)
+		// 		done <- true
+		// 	}
+		// } else { // only match filename
+		// 	for {
+		// 		fn := <-filename
+		// 		filenameSearch(re, fn)
+		// 		done <- true
+		// 	}
+		// }
 	}()
 	defer routineKeeper(done)
 
@@ -214,7 +231,6 @@ func search(expr, path string, max int) {
 func main() {
 	Init()
 	flag.Parse()
-	expr := flag.Arg(0)
 	currentPath, _ := os.Getwd()
-	search(expr, currentPath, SEARCH_MAX) // fullTextSearch(expr, currentPath, 1000)
+	search(EXPR, currentPath, SEARCH_MAX) // fullTextSearch(expr, currentPath, 1000)
 }
