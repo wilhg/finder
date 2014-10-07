@@ -14,6 +14,23 @@ import (
 	"github.com/wsxiaoys/terminal/color"
 )
 
+var (
+	SEARCH_MAX    int
+	IS_FULLTEXT   bool
+	CONTEXT_RANGE int
+
+	H = []byte("@{!C}") // highlight
+	R = []byte("@|")    // reset
+	J = []byte("")      // bytes joiner
+)
+
+func Init() {
+	flag.IntVar(&SEARCH_MAX, "max", 1000, "The maximum number of search")
+	flag.IntVar(&CONTEXT_RANGE, "n", 2, "The lines of context to show")
+	flag.BoolVar(&IS_FULLTEXT, "f", false, "Use fulltext search")
+	runtime.GOMAXPROCS(runtime.NumCPU())
+}
+
 type Result struct {
 	Line    int
 	Content string
@@ -22,51 +39,49 @@ type Result struct {
 type ResultList []Result
 
 func (list *ResultList) Add(r Result) {
-	list = append(list, r)
+	*list = append(*list, r)
 }
-func (list *ResultList) FindByLine(line int) Result {
+func (list ResultList) FindByLine(line int) (error, Result) {
 	for _, r := range list {
 		if r.Line == line {
-			return r
+			return nil, r
 		}
 	}
-	return nil
+	return fmt.Errorf("Not Found"), Result{}
 }
 
-func (list *ResultList) fristItem() Result {
+func (list ResultList) getFristItem() Result {
 	return list[0]
 }
-func (list *ResultList) lastItem() Result {
+func (list ResultList) getLastItem() Result {
 	return list[len(list)-1]
 }
 
-func (list *ResultList) Render(n int) ResultList {
+func (list ResultList) Render(n int) ResultList {
+
 	group := ResultList{}
 	groups := []ResultList{} // [1,2,3,5,7,11,13,17] => [[1,2,3,5,7], [11, 13], [19]]
 	for _, item := range list {
-		if len(group) == 0 {
-			group = append(group, item)
-			continue
-		}
-		if diff := item.Line - group.lastItem().Line; diff <= 2*n {
-			group.Add(item)
-		} else {
+		if len(group) > 0 && item.Line-group.getLastItem().Line > 2*n {
 			groups = append(groups, group)
 			group = ResultList{}
-			group = append(group, item)
 		}
+		group.Add(item)
+	}
+	if len(group) > 0 {
+		groups = append(groups, group)
 	}
 
 	outputLines := ResultList{}
 	for _, g := range groups {
-		first := g.fristItem()
-		last := g.lastItem()
-		if head := first - n; head < 0 {
+		head := g.getFristItem().Line - n
+		tail := g.getLastItem().Line + n
+		if head < 0 {
 			head = 0
 		}
-		tail := last + n
 		for i := head; i <= tail; i++ {
-			if a := list.FindByLine(i); a == nil {
+			err, a := list.FindByLine(i)
+			if err != nil {
 				a = Result{Line: i}
 			}
 			outputLines.Add(a)
@@ -75,12 +90,9 @@ func (list *ResultList) Render(n int) ResultList {
 	return outputLines // [9-15, 17-21]
 }
 
-func matchText(expr, filename string) ResultList {
-	var (
-		H = []byte("@B") // highlight
-		R = []byte("@|") // reset
-		J = []byte("")   // bytes joiner
-	)
+func fulltextSearch(expr, filename string) ResultList {
+	// to avoid inject problem, but the cost is change input from @ to @@
+	expr = string(bytes.Replace([]byte(expr), []byte("@"), []byte("@@"), -1))
 	re, _ := regexp.Compile(expr)
 	f, _ := os.Open(filename)
 	scanner := bufio.NewScanner(f)
@@ -89,6 +101,8 @@ func matchText(expr, filename string) ResultList {
 	resultList := ResultList{}
 	for line := 1; scanner.Scan(); line++ {
 		content := scanner.Bytes()
+		// to avoid inject problem, but the cost is change input from @ to @@
+		content = bytes.Replace(content, []byte("@"), []byte("@@"), -1)
 		indexes := re.FindAllSubmatchIndex(content, -1)
 		if indexes == nil {
 			continue
@@ -106,33 +120,54 @@ func matchText(expr, filename string) ResultList {
 	return resultList
 }
 
-func printResults(results ResultList) {
-	for cousor, line := 0, 1; scanner.Scan(); line++ {
+func printResults(filename string, results ResultList) {
+	f, _ := os.Open(filename)
+	scanner := bufio.NewScanner(f)
+	defer f.Close()
+	if len(results) == 0 {
+		return
+	}
+	color.Printf("@{!y}" + filename + "@|\n")
+	for cousor, line := 0, 1; cousor < len(results) && scanner.Scan(); line++ {
 		if line != results[cousor].Line {
 			continue
-		} else if results[cousor].Content != "" {
-			color.Printf("@c%d@|:\t", line)
+		}
+		fmt.Print("  ")
+		if results[cousor].Content != "" {
+			color.Printf("@{!c}%d@|:\t", line)
 			color.Println(results[cousor].Content)
 		} else {
 			color.Printf("@c%d@|\t", line)
-			color.Println(scanner.Text())
-			if results[cousor].Line-results[cousor-1].Line > 1 {
-				fmt.Println(":")
+			fmt.Println(scanner.Text())
+		}
+		if cousor+1 < len(results) && results[cousor+1].Line-results[cousor].Line != 1 {
+			fmt.Print("  ")
+			for num := results[cousor+1].Line; num > 0; num /= 10 {
+				fmt.Print(".")
 			}
+			fmt.Println()
 		}
 		cousor++
 	}
+	fmt.Println()
 }
-
-func walk(expr, path string) {
-	if err := filepath.Walk(path, func(path string, f os.FileInfo, err error) error {
-		// pick(expr, path)
-		return nil
-	}); err != nil {
-		fmt.Printf("filepath.Walk() returned %v\n", err)
+func filenameSearch(expr, filename string) {
+	re, _ := regexp.Compile(expr)
+	content := []byte(filename)
+	indexes := re.FindAllSubmatchIndex(content, -1)
+	if indexes == nil {
+		return
 	}
+	offset := 0 // the color code would crease length
+	for _, index := range indexes {
+		head := index[0] + offset
+		tail := index[1] + offset
+		offset += len(H) + len(R)
+		total := [][]byte{content[0:head], H, content[head:tail], R, content[tail:]}
+		content = bytes.Join(total, J)
+	}
+	color.Println(string(content))
 }
-
 func routineKeeper(done chan bool) {
 	for {
 		runtime.Gosched()
@@ -146,15 +181,24 @@ func routineKeeper(done chan bool) {
 	}
 }
 
-func fullTextSearch(expr, path string, max int) {
-	filename := make(chan string, max) // here should use chan
+func search(expr, path string, max int) {
+	filename := make(chan string, max)
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
 	go func() {
-		for {
-			printResults(matchText(expr, <-filename).Render(2))
-			done <- true
+		if IS_FULLTEXT {
+			for {
+				fn := <-filename
+				printResults(fn, fulltextSearch(expr, fn).Render(CONTEXT_RANGE))
+				done <- true
+			}
+		} else { // only match filename
+			for {
+				fn := <-filename
+				filenameSearch(expr, fn)
+				done <- true
+			}
 		}
 	}()
 	defer routineKeeper(done)
@@ -170,10 +214,9 @@ func fullTextSearch(expr, path string, max int) {
 }
 
 func main() {
-	runtime.GOMAXPROCS(8)
+	Init()
 	flag.Parse()
 	expr := flag.Arg(0)
 	currentPath, _ := os.Getwd()
-
-	fullTextSearch(expr, currentPath, 1000)
+	search(expr, currentPath, SEARCH_MAX) // fullTextSearch(expr, currentPath, 1000)
 }
