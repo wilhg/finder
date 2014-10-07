@@ -21,7 +21,6 @@ var (
 
 	H = []byte("@{!C}") // highlight
 	R = []byte("@|")    // reset
-	J = []byte("")      // bytes joiner
 )
 
 func Init() {
@@ -58,7 +57,6 @@ func (list ResultList) getLastItem() Result {
 }
 
 func (list ResultList) Render(n int) ResultList {
-
 	group := ResultList{}
 	groups := []ResultList{} // [1,2,3,5,7,11,13,17] => [[1,2,3,5,7], [11, 13], [19]]
 	for _, item := range list {
@@ -113,7 +111,7 @@ func fulltextSearch(expr, filename string) ResultList {
 			tail := index[1] + offset
 			offset += len(H) + len(R)
 			total := [][]byte{content[0:head], H, content[head:tail], R, content[tail:]}
-			content = bytes.Join(total, J)
+			content = bytes.Join(total, []byte(""))
 		}
 		resultList.Add(Result{line, string(content)})
 	}
