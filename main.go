@@ -182,7 +182,6 @@ func search(expr, path string, max int) {
 	} else {
 		searchFunc = filenameSearch
 	}
-
 	go func() {
 		re, err := regexp.Compile(expr)
 		if err != nil {
@@ -196,6 +195,7 @@ func search(expr, path string, max int) {
 		}
 	}()
 	defer routineKeeper(done)
+
 	count := 0
 	filepath.Walk(path, func(path string, f os.FileInfo, err error) error {
 		if count < max && !f.IsDir() {
