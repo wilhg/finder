@@ -158,13 +158,6 @@ func filenameSearch(re regexp.Regexp, filename string) {
 	}
 	color.Println(string(content))
 }
-func getSearchFunc() func(regexp.Regexp, string) {
-	if IS_FULLTEXT {
-		return fulltextSearch
-	} else {
-		return filenameSearch
-	}
-}
 func routineKeeper(done chan bool) {
 	for {
 		runtime.Gosched()
@@ -183,7 +176,13 @@ func search(expr, path string, max int) {
 	defer close(filename)
 	defer close(done)
 
-	theFunc := getSearchFunc()
+	var searchFunc func(regexp.Regexp, string)
+	if IS_FULLTEXT {
+		searchFunc = fulltextSearch
+	} else {
+		searchFunc = filenameSearch
+	}
+
 	go func() {
 		re, err := regexp.Compile(expr)
 		if err != nil {
@@ -192,7 +191,7 @@ func search(expr, path string, max int) {
 		}
 		for {
 			fn := <-filename
-			theFunc(*re, fn)
+			searchFunc(*re, fn)
 			done <- true
 		}
 	}()
