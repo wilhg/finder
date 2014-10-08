@@ -18,7 +18,6 @@ var (
 	SEARCH_MAX    int
 	IS_FULLTEXT   bool
 	CONTEXT_RANGE int
-	EXPR          string
 
 	H = []byte("@{!C}") // highlight
 	R = []byte("@|")    // reset
@@ -28,8 +27,6 @@ func Init() {
 	flag.IntVar(&SEARCH_MAX, "max", 1000, "The maximum number of search")
 	flag.IntVar(&CONTEXT_RANGE, "n", 2, "The lines of context to show")
 	flag.BoolVar(&IS_FULLTEXT, "f", false, "Use fulltext search")
-	EXPR = flag.Arg(0)
-	EXPR = string(bytes.Replace([]byte(EXPR), []byte("@"), []byte("@@"), -1))
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
@@ -37,7 +34,6 @@ type Result struct {
 	Line    int
 	Content string
 }
-type PrintFunc func(regexp.Regexp, string)
 type ResultList []Result
 
 func (list *ResultList) Add(r Result) {
@@ -91,8 +87,7 @@ func (list ResultList) Render(n int) ResultList {
 	return outputLines // [9-15, 17-21]
 }
 
-func FulltextSearch(re regexp.Regexp, filename string) {
-	// to avoid inject problem, but the cost is change input from @ to @@
+func fulltextSearch(re regexp.Regexp, filename string) {
 	f, _ := os.Open(filename)
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -117,11 +112,12 @@ func FulltextSearch(re regexp.Regexp, filename string) {
 		resultList.Add(Result{line, string(content)})
 	}
 
-	results := resultList.Render(SEARCH_MAX)
+	results := resultList.Render(CONTEXT_RANGE)
 	if len(results) == 0 {
 		return
 	}
 	color.Printf("@{!y}" + filename + "@|\n")
+	f.Seek(0, 0)
 	scanner2 := bufio.NewScanner(f)
 	for cousor, line := 0, 1; cousor < len(results) && scanner2.Scan(); line++ {
 		if line != results[cousor].Line {
@@ -133,7 +129,7 @@ func FulltextSearch(re regexp.Regexp, filename string) {
 			color.Println(results[cousor].Content)
 		} else {
 			color.Printf("@c%d@|\t", line)
-			fmt.Println(scanner.Text())
+			fmt.Println(scanner2.Text())
 		}
 		if cousor+1 < len(results) && results[cousor+1].Line-results[cousor].Line != 1 {
 			fmt.Print("  ")
@@ -146,8 +142,7 @@ func FulltextSearch(re regexp.Regexp, filename string) {
 	}
 	fmt.Println()
 }
-
-func FilenameSearch(re regexp.Regexp, filename string) {
+func filenameSearch(re regexp.Regexp, filename string) {
 	content := []byte(filename)
 	indexes := re.FindAllSubmatchIndex(content, -1)
 	if indexes == nil {
@@ -159,9 +154,16 @@ func FilenameSearch(re regexp.Regexp, filename string) {
 		tail := index[1] + offset
 		offset += len(H) + len(R)
 		total := [][]byte{content[0:head], H, content[head:tail], R, content[tail:]}
-		content = bytes.Join(total, J)
+		content = bytes.Join(total, []byte(""))
 	}
 	color.Println(string(content))
+}
+func getSearchFunc() func(regexp.Regexp, string) {
+	if IS_FULLTEXT {
+		return fulltextSearch
+	} else {
+		return filenameSearch
+	}
 }
 func routineKeeper(done chan bool) {
 	for {
@@ -175,22 +177,13 @@ func routineKeeper(done chan bool) {
 		}
 	}
 }
-
-func task(fulltext, unfulltext PrintFunc) PrintFunc {
-	if IS_FULLTEXT {
-		return fulltext
-	} else {
-		return unfulltext
-	}
-}
-
 func search(expr, path string, max int) {
 	filename := make(chan string, max)
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
 
-	theFunc := task(FulltextSearch, FilenameSearch)
+	theFunc := getSearchFunc()
 	go func() {
 		re, err := regexp.Compile(expr)
 		if err != nil {
@@ -199,25 +192,11 @@ func search(expr, path string, max int) {
 		}
 		for {
 			fn := <-filename
-			theFunc(re, fn)
+			theFunc(*re, fn)
 			done <- true
 		}
-		// if IS_FULLTEXT {
-		// 	for {
-		// 		fn := <-filename
-		// 		fulltextSearch(re, fn)
-		// 		done <- true
-		// 	}
-		// } else { // only match filename
-		// 	for {
-		// 		fn := <-filename
-		// 		filenameSearch(re, fn)
-		// 		done <- true
-		// 	}
-		// }
 	}()
 	defer routineKeeper(done)
-
 	count := 0
 	filepath.Walk(path, func(path string, f os.FileInfo, err error) error {
 		if count < max && !f.IsDir() {
@@ -232,5 +211,7 @@ func main() {
 	Init()
 	flag.Parse()
 	currentPath, _ := os.Getwd()
-	search(EXPR, currentPath, SEARCH_MAX) // fullTextSearch(expr, currentPath, 1000)
+	// to avoid inject problem, but the cost is change input from @ to @@
+	expr := string(bytes.Replace([]byte(flag.Arg(0)), []byte("@"), []byte("@@"), -1))
+	search(expr, currentPath, SEARCH_MAX) // fullTextSearch(expr, currentPath, 1000)
 }
