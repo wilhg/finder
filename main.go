@@ -87,7 +87,7 @@ func (list ResultList) Render(n int) ResultList {
 	return outputLines // [9-15, 17-21]
 }
 
-func fulltextSearch(re regexp.Regexp, filename string) {
+func fulltextSearch(re *regexp.Regexp, filename string) {
 	f, _ := os.Open(filename)
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -142,7 +142,7 @@ func fulltextSearch(re regexp.Regexp, filename string) {
 	}
 	fmt.Println()
 }
-func filenameSearch(re regexp.Regexp, filename string) {
+func filenameSearch(re *regexp.Regexp, filename string) {
 	content := []byte(filename)
 	indexes := re.FindAllSubmatchIndex(content, -1)
 	if indexes == nil {
@@ -175,22 +175,22 @@ func search(expr, path string, max int) {
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
-
-	var searchFunc func(regexp.Regexp, string)
+	var searchFunc func(*regexp.Regexp, string)
 	if IS_FULLTEXT {
 		searchFunc = fulltextSearch
 	} else {
 		searchFunc = filenameSearch
 	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	go func() {
-		re, err := regexp.Compile(expr)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
 		for {
 			fn := <-filename
-			searchFunc(*re, fn)
+			searchFunc(re, fn)
 			done <- true
 		}
 	}()
