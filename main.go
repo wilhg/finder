@@ -175,6 +175,7 @@ func search(expr, path string, max int) {
 	done := make(chan bool, max)
 	defer close(filename)
 	defer close(done)
+
 	var searchFunc func(*regexp.Regexp, string)
 	if IS_FULLTEXT {
 		searchFunc = fulltextSearch
@@ -183,8 +184,7 @@ func search(expr, path string, max int) {
 	}
 	re, err := regexp.Compile(expr)
 	if err != nil {
-		fmt.Println(err)
-		return
+		panic(err)
 	}
 
 	go func() {
